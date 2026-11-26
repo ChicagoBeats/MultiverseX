@@ -1,5 +1,6 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "NeonLookAndFeel.h"
 
 // Galaxy that spins, pulses and bounces with the synth's modulation
 class GalaxyVisualizer : public juce::Component, private juce::Timer {
@@ -26,14 +27,39 @@ private:
     MultiverseXProcessor& proc;
 };
 
-class MultiverseXEditor : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget {
+// Click = randomize this section, Right-Click = lock / unlock it
+class SectionButton : public juce::TextButton {
+public:
+    SectionButton(MultiverseXProcessor& p, int s) : proc(p), sec(s) {
+        static const char* names[] = {"Synth", "Matrix", "FX", "Sampler"};
+        name = names[s]; refresh();
+    }
+    void refresh() {
+        const bool l = proc.locked[sec];
+        setButtonText((l ? "LOCKED " : "Rand ") + name);
+        setColour(juce::TextButton::buttonColourId, l ? juce::Colour(0xff7a1f1f) : juce::Colour(0xff2a2540));
+    }
+    void mouseDown(const juce::MouseEvent& e) override {
+        if (e.mods.isPopupMenu()) { proc.locked[sec] = !proc.locked[sec]; refresh(); }
+        else juce::TextButton::mouseDown(e);
+    }
+    void mouseUp(const juce::MouseEvent& e) override { if (!e.mods.isPopupMenu()) juce::TextButton::mouseUp(e); }
+private:
+    MultiverseXProcessor& proc; int sec; juce::String name;
+};
+
+class MultiverseXEditor : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget, private juce::Timer {
 public:
     explicit MultiverseXEditor(MultiverseXProcessor&);
+    ~MultiverseXEditor() override;
     void resized() override;
     void paint(juce::Graphics&) override;
     bool isInterestedInFileDrag(const juce::StringArray& f) override;
     void filesDropped(const juce::StringArray& f, int, int) override;
 private:
+    NeonLookAndFeel laf;                    // first member: outlives every component that uses it
+    void timerCallback() override;
+    void drawPanel(juce::Graphics&, juce::Rectangle<int>);
     using SA = juce::AudioProcessorValueTreeState::SliderAttachment;
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
     using CA = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
@@ -55,6 +81,17 @@ private:
     std::vector<std::unique_ptr<juce::ComboBox>> mSrc, mDst;
     std::vector<std::unique_ptr<juce::Slider>> mAmt;
     std::vector<std::unique_ptr<CA>> mCombo;
+    std::vector<std::unique_ptr<juce::ToggleButton>> fxOn;
+    std::vector<std::unique_ptr<juce::Slider>> fxMix, fxRate;
+    std::vector<std::unique_ptr<BA>> fxAtt;
+    std::vector<std::unique_ptr<SectionButton>> secBtn;
+    juce::TextButton undoBtn{"Undo"}, redoBtn{"Redo"};
+    juce::Slider amtSlider;
+    std::unique_ptr<SA> amtAtt;
+    std::unique_ptr<juce::ParameterAttachment> engineParamAtt;
     std::unique_ptr<juce::FileChooser> chooser;
+    juce::Rectangle<int> panelKnobs, panelSampler, panelGalaxy, panelKeys;
+    std::vector<juce::Point<float>> stars;
+    int lastEngine = -1;
     juce::MidiKeyboardComponent keys;
 };

@@ -209,6 +209,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiverseXProcessor::layout
         l.add(std::make_unique<juce::AudioParameterChoice>(id + "dst", "Mod " + juce::String(i + 1) + " Target", modTargets(), kModDefaults[i].dst));
         l.add(std::make_unique<APF>(id + "amt", "Mod " + juce::String(i + 1) + " Amount", juce::NormalisableRange<float>(-1.f, 1.f, 0.001f), kModDefaults[i].amt));
     }
+    // ---- effects rack: on / mix / rate per effect
+    for (int i = 0; i < kNumFx; ++i) {
+        const juce::String id = juce::String("fx_") + kFx[i].key;
+        l.add(std::make_unique<juce::AudioParameterBool>(id + "_on", juce::String(kFx[i].name) + " On", kFx[i].on));
+        l.add(std::make_unique<APF>(id + "_mix", juce::String(kFx[i].name) + " Mix", juce::NormalisableRange<float>(0.f, 1.f), kFx[i].mix));
+        l.add(std::make_unique<APF>(id + "_rate", juce::String(kFx[i].name) + " Rate", juce::NormalisableRange<float>(0.f, 1.f), kFx[i].rate));
+    }
+    f("randAmount", "Random Amount", 0, 1, 1.0f);
     // ---- WAV sampler
     f("sStart", "Start", 0, 1, 0);
     f("sEnd", "End", 0, 1, 1);
@@ -236,6 +244,7 @@ MultiverseXProcessor::MultiverseXProcessor()
 void MultiverseXProcessor::prepareToPlay(double sr, int) {
     synth.setCurrentPlaybackSampleRate(sr);
     sampler.setCurrentPlaybackSampleRate(sr);
+    fx.prepare(sr);
     reverb.setSampleRate(sr);
     delayBuf.setSize(2, (int)(sr * 2.0)); delayBuf.clear(); delayPos = 0;
     keyboardState.reset();
@@ -276,6 +285,7 @@ void MultiverseXProcessor::processBlock(juce::AudioBuffer<float>& buf, juce::Mid
         visModEnergy = juce::jlimit(0.f, 1.f, e * 0.35f);
     }
     const float mg = apvts.getRawParameterValue("master")->load();
+    fx.processPre(buf);
     const int n = buf.getNumSamples(), ch = juce::jmin(2, buf.getNumChannels());
     const int dlen = delayBuf.getNumSamples(), dtime = (int)(getSampleRate() * 0.375);
 
@@ -297,6 +307,7 @@ void MultiverseXProcessor::processBlock(juce::AudioBuffer<float>& buf, juce::Mid
     reverb.setParameters(rp);
     if (ch == 2) reverb.processStereo(buf.getWritePointer(0), buf.getWritePointer(1), n);
 
+    fx.processPost(buf);
     buf.applyGain(mg);
     visLevel = juce::jlimit(0.f, 1.f, buf.getMagnitude(0, n) * 2.f);
 }
@@ -313,21 +324,114 @@ void MultiverseXProcessor::applyEngine(int i) {
     setP("atk", e.atk); setP("rel", e.rel);
 }
 
-void MultiverseXProcessor::randomize() {
+void MultiverseXProcessor::blendTo(const juce::String& id, float target, float amt) {
+    if (auto* p = apvts.getParameter(id)) {
+        const float o = p->getValue();
+        p->setValueNotifyingHost(juce::jlimit(0.f, 1.f, o + (target - o) * amt));
+    }
+}
+
+void MultiverseXProcessor::setChance(const juce::String& id, float amt, juce::Random& r, float target) {
+    if (r.nextFloat() < amt)
+        if (auto* p = apvts.getParameter(id)) p->setValueNotifyingHost(target);
+}
+
+MultiverseXProcessor::Snapshot MultiverseXProcessor::snapshot() {
+    Snapshot s;
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*>(p)) {
+            const juce::String id = rp->paramID;
+            if (id == "master" || id == "randAmount") continue;     // not part of undo
+            s.emplace_back(id, rp->getValue());
+        }
+    return s;
+}
+
+void MultiverseXProcessor::restore(const Snapshot& s) {
+    for (auto& kv : s)
+        if (auto* p = apvts.getParameter(kv.first)) p->setValueNotifyingHost(kv.second);
+}
+
+void MultiverseXProcessor::pushUndo() {
+    undoStack.push_back(snapshot());
+    if (undoStack.size() > 50) undoStack.erase(undoStack.begin());
+    redoStack.clear();
+}
+void MultiverseXProcessor::undo() {
+    if (undoStack.empty()) return;
+    redoStack.push_back(snapshot());
+    auto s = undoStack.back(); undoStack.pop_back();
+    restore(s);
+}
+void MultiverseXProcessor::redo() {
+    if (redoStack.empty()) return;
+    undoStack.push_back(snapshot());
+    auto s = redoStack.back(); redoStack.pop_back();
+    restore(s);
+}
+
+void MultiverseXProcessor::doRandomize(int sec) {
     juce::Random r;
-    for (auto* id : {"cutoff","res","drive","atk","dec","sus","rel","detune","lfo1Rate","lfo2Rate","reverb","delay"})
-        if (auto* p = apvts.getParameter(id)) p->setValueNotifyingHost(r.nextFloat());
-    for (int i = 0; i < kModSlots; ++i)
-        if (auto* p = apvts.getParameter("m" + juce::String(i) + "amt")) p->setValueNotifyingHost(r.nextFloat());
+    const float amt = apvts.getRawParameterValue("randAmount")->load();   // 100% = full jump, lower = nudge toward new values
+    auto rf = [&] { return r.nextFloat(); };
+    switch (sec) {
+    case SEC_SYNTH:
+        if (rf() < amt) applyEngine(r.nextInt(kNumEngines));
+        blendTo("cutoff", 0.2f + 0.8f * rf(), amt);
+        blendTo("res", 0.6f * rf(), amt);
+        blendTo("drive", 0.5f * rf() * rf(), amt);
+        blendTo("atk", 0.6f * rf() * rf(), amt);
+        blendTo("dec", rf(), amt);
+        blendTo("sus", 0.3f + 0.7f * rf(), amt);
+        blendTo("rel", 0.7f * rf(), amt);
+        blendTo("detune", 0.6f * rf(), amt);
+        blendTo("lfo1Rate", rf(), amt);
+        blendTo("lfo2Rate", rf(), amt);
+        blendTo("reverb", 0.6f * rf(), amt);
+        blendTo("delay", 0.5f * rf(), amt);
+        break;
+    case SEC_MATRIX:
+        for (int k = 0; k < kModSlots; ++k) {
+            const juce::String id = "m" + juce::String(k);
+            setChance(id + "src", amt, r, rf());
+            setChance(id + "dst", amt, r, rf());
+            blendTo(id + "amt", 0.1f + 0.8f * rf(), amt);
+        }
+        break;
+    case SEC_FX:
+        for (int i = 0; i < kNumFx; ++i) {
+            if (i == FX_LIMIT) continue;                                   // limiter is the safety stage
+            const juce::String id = juce::String("fx_") + kFx[i].key;
+            setChance(id + "_on", amt, r, rf() < 0.3f ? 1.f : 0.f);
+            blendTo(id + "_mix", 0.3f + 0.7f * rf(), amt);
+            blendTo(id + "_rate", rf(), amt);
+        }
+        break;
+    case SEC_SAMPLER:
+        blendTo("sPan", rf(), amt);
+        blendTo("sPitch", 0.4f + 0.2f * rf(), amt);
+        blendTo("sSpeed", 0.07f + 0.4f * rf(), amt);
+        setChance("sRev", amt, r, rf() < 0.25f ? 1.f : 0.f);
+        break;
+    }
+}
+
+void MultiverseXProcessor::randomizeSection(int sec) { pushUndo(); doRandomize(sec); }
+
+void MultiverseXProcessor::randomizeAll() {
+    pushUndo();
+    for (int s = 0; s < SEC_COUNT; ++s) if (!locked[s]) doRandomize(s);
 }
 
 void MultiverseXProcessor::getStateInformation(juce::MemoryBlock& d) {
     apvts.state.setProperty("samplePath", samplePath, nullptr);
+    for (int i = 0; i < SEC_COUNT; ++i) apvts.state.setProperty("lock" + juce::String(i), locked[i] ? 1 : 0, nullptr);
     if (auto xml = apvts.copyState().createXml()) copyXmlToBinary(*xml, d);
 }
 void MultiverseXProcessor::setStateInformation(const void* d, int n) {
     if (auto xml = getXmlFromBinary(d, n)) {
         apvts.replaceState(juce::ValueTree::fromXml(*xml));
+        for (int i = 0; i < SEC_COUNT; ++i) locked[i] = (int)apvts.state.getProperty("lock" + juce::String(i), 0) == 1;
         auto path = apvts.state.getProperty("samplePath").toString();
         if (path.isNotEmpty() && juce::File(path).existsAsFile()) loadSample(juce::File(path));
     }
