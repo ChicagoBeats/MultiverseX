@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
 #include "Engines.h"
+#include "ModMatrix.h"
 
 class MultiverseXProcessor : public juce::AudioProcessor {
 public:
@@ -34,6 +35,8 @@ public:
     juce::MidiKeyboardState keyboardState;
     // modulation activity, read by the visualizer
     std::atomic<float> visLfo1{0}, visLfo2{0}, visLevel{0};
+    std::atomic<float> modWheel{0}, breath{0}, aftertouch{0}, lastVel{0}, lastRnd{0}, visModEnergy{0};
+    std::atomic<int> noteCount{0};
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();

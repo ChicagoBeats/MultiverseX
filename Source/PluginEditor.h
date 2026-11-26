@@ -12,6 +12,8 @@ private:
     struct Star { float angle, radius, speed, size; };
     std::vector<Star> stars;
     float rot = 0, cx = 0, cy = 0, vx = 0, vy = 0, scale = 1;
+    int lastNotes = 0;
+    juce::Random rng;
 };
 
 // Sample overview with start/end markers and slice lines
@@ -50,6 +52,9 @@ private:
     std::vector<std::unique_ptr<juce::Slider>> knobs, sKnobs;
     std::vector<std::unique_ptr<juce::Label>> labels, sLabels;
     std::vector<std::unique_ptr<SA>> atts;
+    std::vector<std::unique_ptr<juce::ComboBox>> mSrc, mDst;
+    std::vector<std::unique_ptr<juce::Slider>> mAmt;
+    std::vector<std::unique_ptr<CA>> mCombo;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::MidiKeyboardComponent keys;
 };

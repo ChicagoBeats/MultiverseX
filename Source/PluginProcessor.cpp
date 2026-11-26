@@ -19,12 +19,21 @@ static float osc(int shape, float p) {
 }
 
 struct MxVoice : juce::SynthesiserVoice {
-    MxVoice(MultiverseXProcessor& p) : proc(p) {}
+    MxVoice(MultiverseXProcessor& p) : proc(p) {
+        for (int i = 0; i < kModSlots; ++i) {
+            const auto id = "m" + juce::String(i);
+            srcP[i] = p.apvts.getRawParameterValue(id + "src");
+            dstP[i] = p.apvts.getRawParameterValue(id + "dst");
+            amtP[i] = p.apvts.getRawParameterValue(id + "amt");
+        }
+    }
     bool canPlaySound(juce::SynthesiserSound* s) override { return dynamic_cast<MxSound*>(s) != nullptr; }
 
     void startNote(int note, float vel, juce::SynthesiserSound*, int) override {
         freq = (float)juce::MidiMessage::getMidiNoteInHertz(note);
         level = vel;
+        rnd = rng.nextFloat() * 2.f - 1.f;
+        proc.lastVel = vel; proc.lastRnd = rnd; ++proc.noteCount;
         for (auto& p : ph) p = 0;
         adsr.setSampleRate(getSampleRate());
         filt.prepare({getSampleRate(), 512, 1});
@@ -45,27 +54,45 @@ struct MxVoice : juce::SynthesiserVoice {
         const auto& eng = kEngines[juce::jlimit(0, kNumEngines - 1, (int)P("engine"))];
         adsr.setParameters({P("atk"), P("dec"), P("sus"), P("rel")});
         const float cutoff = P("cutoff"), res = P("res"), drive = P("drive"), det = P("detune");
-        const float l1r = P("lfo1Rate"), l1c = P("lfo1Cut"), l2r = P("lfo2Rate"), l2p = P("lfo2Pitch");
+        const float l1r = P("lfo1Rate"), l2r = P("lfo2Rate");
         const float sr = (float)getSampleRate();
+        int S[kModSlots], D[kModSlots]; float A[kModSlots];
+        for (int k = 0; k < kModSlots; ++k) { S[k] = (int)srcP[k]->load(); D[k] = (int)dstP[k]->load(); A[k] = amtP[k]->load(); }
+        float dr[4];
+        for (int o = 0; o < 4; ++o) dr[o] = std::exp2(((o - 1.5f) * det) / 1200.f);
+        const float aft = proc.aftertouch, mw = proc.modWheel, br = proc.breath;
         float l1 = 0, l2 = 0;
         for (int i = 0; i < num; ++i) {
             lp1 += l1r / sr; if (lp1 >= 1) lp1 -= 1;
             lp2 += l2r / sr; if (lp2 >= 1) lp2 -= 1;
             l1 = std::sin(juce::MathConstants<float>::twoPi * lp1);
             l2 = std::sin(juce::MathConstants<float>::twoPi * lp2);
+            const float env = adsr.getNextSample();
+
+            const float sv[S_COUNT] = {l1, l2, env, level, aft, mw, br, rnd};
+            float off[D_COUNT] = {};
+            evalModMatrix(S, D, A, sv, off);
+
+            const float pm = off[D_PIT] != 0.f ? std::exp2(off[D_PIT] * 2.f / 12.f) : 1.f;   // 100% = 2 semitones
             float s = 0;
             for (int o = 0; o < 4; ++o) {
-                float f = freq * std::pow(2.f, ((o - 1.5f) * det) / 1200.f + l2 * l2p * 2.f / 12.f);
-                ph[o] += f / sr; if (ph[o] >= 1) ph[o] -= 1;
+                ph[o] += freq * dr[o] * pm / sr; if (ph[o] >= 1) ph[o] -= 1;
                 s += osc(eng.shapes[o], ph[o]) * 0.25f;
             }
-            float fc = juce::jlimit(20.f, 18000.f, cutoff * std::pow(2.f, l1 * l1c * 3.f));
+            const float fc = juce::jlimit(20.f, 18000.f, cutoff * std::exp2(off[D_CUT] * 4.f));  // 100% = 4 octaves
             filt.setCutoffFrequency(fc);
-            filt.setResonance(0.5f + res * 4.f);
+            filt.setResonance(0.5f + juce::jlimit(0.f, 1.f, res + off[D_RES] * 0.5f) * 4.f);
             s = filt.processSample(0, s);
-            s = std::tanh(s * (1.f + drive * 8.f)) / (1.f + drive * 1.5f);
-            s *= adsr.getNextSample() * level;
-            for (int c = 0; c < out.getNumChannels(); ++c) out.addSample(c, start + i, s);
+            const float dv = juce::jlimit(0.f, 1.f, drive + off[D_DRV]);
+            s = std::tanh(s * (1.f + dv * 8.f)) / (1.f + dv * 1.5f);
+            s *= env * level * juce::jlimit(0.f, 1.5f, 1.f + off[D_AMP]) * 0.6f;
+
+            float gl = 1.f, gr = 1.f;
+            if (off[D_PAN] != 0.f) {
+                const float ang = (juce::jlimit(-1.f, 1.f, off[D_PAN]) + 1.f) * juce::MathConstants<float>::pi * 0.25f;
+                gl = std::cos(ang) * 1.4142f; gr = std::sin(ang) * 1.4142f;
+            }
+            for (int c = 0; c < out.getNumChannels(); ++c) out.addSample(c, start + i, s * (c == 0 ? gl : gr));
         }
         proc.visLfo1 = l1; proc.visLfo2 = l2;
         if (!adsr.isActive()) clearCurrentNote();
@@ -74,7 +101,9 @@ struct MxVoice : juce::SynthesiserVoice {
     MultiverseXProcessor& proc;
     juce::ADSR adsr;
     juce::dsp::StateVariableTPTFilter<float> filt;
-    float freq = 440, level = 0, ph[4] = {}, lp1 = 0, lp2 = 0;
+    juce::Random rng;
+    std::atomic<float>* srcP[kModSlots]; std::atomic<float>* dstP[kModSlots]; std::atomic<float>* amtP[kModSlots];
+    float freq = 440, level = 0, rnd = 0, ph[4] = {}, lp1 = 0, lp2 = 0;
 };
 
 // ---------------------------------------------------------------- sampler
@@ -169,12 +198,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiverseXProcessor::layout
     f("rel", "Release", 0.01f, 8, 0.3f, 0.4f);
     f("detune", "Detune", 0, 50, 8);
     f("lfo1Rate", "LFO1 Rate", 0.05f, 20, 0.5f, 0.4f);
-    f("lfo1Cut", "LFO1>Cutoff", 0, 1, 0.75f);
     f("lfo2Rate", "LFO2 Rate", 0.05f, 20, 4, 0.4f);
-    f("lfo2Pitch", "LFO2>Pitch", 0, 1, 0.1f);
     f("reverb", "Reverb", 0, 1, 0.25f);
     f("delay", "Delay", 0, 1, 0.2f);
     f("master", "Master", 0, 1, 0.7f);
+    // ---- modulation matrix: 8 slots of source > target, amount -100%..+100%
+    for (int i = 0; i < kModSlots; ++i) {
+        const auto id = "m" + juce::String(i);
+        l.add(std::make_unique<juce::AudioParameterChoice>(id + "src", "Mod " + juce::String(i + 1) + " Source", modSources(), kModDefaults[i].src));
+        l.add(std::make_unique<juce::AudioParameterChoice>(id + "dst", "Mod " + juce::String(i + 1) + " Target", modTargets(), kModDefaults[i].dst));
+        l.add(std::make_unique<APF>(id + "amt", "Mod " + juce::String(i + 1) + " Amount", juce::NormalisableRange<float>(-1.f, 1.f, 0.001f), kModDefaults[i].amt));
+    }
     // ---- WAV sampler
     f("sStart", "Start", 0, 1, 0);
     f("sEnd", "End", 0, 1, 1);
@@ -211,11 +245,36 @@ void MultiverseXProcessor::processBlock(juce::AudioBuffer<float>& buf, juce::Mid
     juce::ScopedNoDenormals nd;
     buf.clear();
     keyboardState.processNextMidiBuffer(midi, 0, buf.getNumSamples(), true);
+    for (const auto meta : midi) {                         // performance controllers feed the mod matrix
+        const auto m = meta.getMessage();
+        if (m.isController()) {
+            if (m.getControllerNumber() == 1) modWheel = (float)m.getControllerValue() / 127.f;
+            else if (m.getControllerNumber() == 2) breath = (float)m.getControllerValue() / 127.f;
+        } else if (m.isChannelPressure()) aftertouch = (float)m.getChannelPressureValue() / 127.f;
+        else if (m.isAftertouch()) aftertouch = (float)m.getAfterTouchValue() / 127.f;
+    }
     if (apvts.getRawParameterValue("synthOn")->load() > 0.5f) synth.renderNextBlock(buf, midi, 0, buf.getNumSamples());
     sampler.renderNextBlock(buf, midi, 0, buf.getNumSamples());
 
-    const float rv = apvts.getRawParameterValue("reverb")->load();
-    const float dl = apvts.getRawParameterValue("delay")->load();
+    float rv = apvts.getRawParameterValue("reverb")->load();
+    float dl = apvts.getRawParameterValue("delay")->load();
+    {   // global (FX) targets use block-rate source values
+        int S[kModSlots], D[kModSlots]; float A[kModSlots];
+        for (int k = 0; k < kModSlots; ++k) {
+            const auto id = "m" + juce::String(k);
+            S[k] = (int)apvts.getRawParameterValue(id + "src")->load();
+            D[k] = (int)apvts.getRawParameterValue(id + "dst")->load();
+            A[k] = apvts.getRawParameterValue(id + "amt")->load();
+        }
+        const float sv[S_COUNT] = {visLfo1, visLfo2, juce::jlimit(0.f, 1.f, visLevel.load() * 2.f), lastVel, aftertouch, modWheel, breath, lastRnd};
+        float off[D_COUNT] = {};
+        evalModMatrix(S, D, A, sv, off);
+        rv = juce::jlimit(0.f, 1.f, rv + off[D_REV] + off[D_FX]);
+        dl = juce::jlimit(0.f, 1.f, dl + off[D_DLY] + off[D_FX]);
+        float e = 0;                                       // overall modulation activity for the visualizer
+        for (int k = 0; k < kModSlots; ++k) if (D[k] > 0) e += std::abs(sv[S[k]] * A[k]);
+        visModEnergy = juce::jlimit(0.f, 1.f, e * 0.35f);
+    }
     const float mg = apvts.getRawParameterValue("master")->load();
     const int n = buf.getNumSamples(), ch = juce::jmin(2, buf.getNumChannels());
     const int dlen = delayBuf.getNumSamples(), dtime = (int)(getSampleRate() * 0.375);
@@ -256,8 +315,10 @@ void MultiverseXProcessor::applyEngine(int i) {
 
 void MultiverseXProcessor::randomize() {
     juce::Random r;
-    for (auto* id : {"cutoff","res","drive","atk","dec","sus","rel","detune","lfo1Rate","lfo1Cut","lfo2Rate","lfo2Pitch","reverb","delay"})
+    for (auto* id : {"cutoff","res","drive","atk","dec","sus","rel","detune","lfo1Rate","lfo2Rate","reverb","delay"})
         if (auto* p = apvts.getParameter(id)) p->setValueNotifyingHost(r.nextFloat());
+    for (int i = 0; i < kModSlots; ++i)
+        if (auto* p = apvts.getParameter("m" + juce::String(i) + "amt")) p->setValueNotifyingHost(r.nextFloat());
 }
 
 void MultiverseXProcessor::getStateInformation(juce::MemoryBlock& d) {
