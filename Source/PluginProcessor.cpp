@@ -77,6 +77,81 @@ struct MxVoice : juce::SynthesiserVoice {
     float freq = 440, level = 0, ph[4] = {}, lp1 = 0, lp2 = 0;
 };
 
+// ---------------------------------------------------------------- sampler
+struct MxSampleSound : juce::SynthesiserSound {
+    juce::AudioBuffer<float> data; double sr = 44100.0;
+    bool appliesToNote(int) override { return true; }
+    bool appliesToChannel(int) override { return true; }
+};
+
+struct MxSampleVoice : juce::SynthesiserVoice {
+    MxSampleVoice(MultiverseXProcessor& p) : proc(p) {}
+    bool canPlaySound(juce::SynthesiserSound* s) override { return dynamic_cast<MxSampleSound*>(s) != nullptr; }
+
+    void startNote(int note, float vel, juce::SynthesiserSound* s, int) override {
+        playing = false;
+        auto* snd = dynamic_cast<MxSampleSound*>(s);
+        if (snd == nullptr || snd->data.getNumSamples() < 2) return;
+        auto P = [&](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
+        const double len = snd->data.getNumSamples();
+        double a = juce::jlimit(0.0, 1.0, (double)P("sStart")), b = juce::jlimit(0.0, 1.0, (double)P("sEnd"));
+        if (b <= a) return;
+        double semis = P("sTune");
+        if ((int)P("sMode") == 1) {                       // Slice mode: C1 (note 36) upward = slice 1, 2, 3...
+            const int n = juce::jmax(1, (int)P("sSlices")), idx = note - 36;
+            if (idx < 0 || idx >= n) return;
+            const double w = (b - a) / n;
+            a = a + idx * w; b = a + w;
+        } else {
+            semis += note - 60;                           // Map mode: C3 (note 60) = original pitch
+        }
+        s0 = a * len; s1 = b * len;
+        if (s1 - s0 < 2) return;
+        ratio = std::pow(2.0, semis / 12.0 + P("sPitch") / 1200.0) * P("sSpeed") * snd->sr / getSampleRate();
+        loop = P("sLoop") > 0.5f; rev = P("sRev") > 0.5f;
+        pos = rev ? s1 - 1 : s0;
+        gain = P("sVol") * vel;
+        const float ang = (juce::jlimit(-1.f, 1.f, P("sPan")) + 1.f) * juce::MathConstants<float>::pi * 0.25f;
+        gl = std::cos(ang) * 1.4142f; gr = std::sin(ang) * 1.4142f;
+        adsr.setSampleRate(getSampleRate());
+        adsr.setParameters({0.002f, 0.f, 1.f, 0.05f});    // tiny fades = no clicks
+        adsr.noteOn();
+        playing = true;
+    }
+    void stopNote(float, bool tail) override {
+        if (tail && playing) adsr.noteOff();
+        else { playing = false; adsr.reset(); clearCurrentNote(); }
+    }
+    void pitchWheelMoved(int) override {}
+    void controllerMoved(int, int) override {}
+
+    void renderNextBlock(juce::AudioBuffer<float>& out, int start, int num) override {
+        auto* snd = dynamic_cast<MxSampleSound*>(getCurrentlyPlayingSound().get());
+        if (!playing || snd == nullptr) { playing = false; clearCurrentNote(); return; }
+        const int nch = snd->data.getNumChannels(), len = snd->data.getNumSamples();
+        for (int i = 0; i < num; ++i) {
+            if (pos < s0 || pos >= s1) {
+                if (loop) pos = rev ? s1 - 1 : s0; else { playing = false; break; }
+            }
+            const int i0 = juce::jlimit(0, len - 1, (int)pos), i1 = juce::jmin(i0 + 1, len - 1);
+            const float fr = (float)(pos - i0), env = adsr.getNextSample();
+            for (int c = 0; c < out.getNumChannels(); ++c) {
+                const float* src = snd->data.getReadPointer(juce::jmin(c, nch - 1));
+                const float v = src[i0] + (src[i1] - src[i0]) * fr;
+                out.addSample(c, start + i, v * env * gain * (c == 0 ? gl : gr));
+            }
+            pos += rev ? -ratio : ratio;
+        }
+        if (!playing || !adsr.isActive()) { playing = false; clearCurrentNote(); }
+    }
+
+    MultiverseXProcessor& proc;
+    juce::ADSR adsr;
+    double pos = 0, s0 = 0, s1 = 0, ratio = 1;
+    float gain = 1, gl = 1, gr = 1;
+    bool playing = false, loop = false, rev = false;
+};
+
 // ---------------------------------------------------------------- processor
 juce::AudioProcessorValueTreeState::ParameterLayout MultiverseXProcessor::layout() {
     juce::AudioProcessorValueTreeState::ParameterLayout l;
@@ -100,6 +175,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiverseXProcessor::layout
     f("reverb", "Reverb", 0, 1, 0.25f);
     f("delay", "Delay", 0, 1, 0.2f);
     f("master", "Master", 0, 1, 0.7f);
+    // ---- WAV sampler
+    f("sStart", "Start", 0, 1, 0);
+    f("sEnd", "End", 0, 1, 1);
+    f("sTune", "Tune", -24, 24, 0);
+    f("sSpeed", "Speed", 0.25f, 4, 1);
+    f("sPitch", "Pitch", -100, 100, 0);
+    f("sPan", "Pan", -1, 1, 0);
+    f("sVol", "Volume", 0, 1.5f, 0.8f);
+    l.add(std::make_unique<juce::AudioParameterInt>("sSlices", "Slices", 2, 32, 8));
+    l.add(std::make_unique<juce::AudioParameterBool>("sLoop", "Loop", false));
+    l.add(std::make_unique<juce::AudioParameterBool>("sRev", "Reverse", false));
+    l.add(std::make_unique<juce::AudioParameterBool>("synthOn", "Synth On", true));
+    l.add(std::make_unique<juce::AudioParameterChoice>("sMode", "Sampler Mode", juce::StringArray{"Map", "Slice"}, 0));
     return l;
 }
 
@@ -108,10 +196,12 @@ MultiverseXProcessor::MultiverseXProcessor()
       apvts(*this, nullptr, "MVX", layout()) {
     synth.addSound(new MxSound());
     for (int i = 0; i < 128; ++i) synth.addVoice(new MxVoice(*this));
+    for (int i = 0; i < 32; ++i) sampler.addVoice(new MxSampleVoice(*this));
 }
 
 void MultiverseXProcessor::prepareToPlay(double sr, int) {
     synth.setCurrentPlaybackSampleRate(sr);
+    sampler.setCurrentPlaybackSampleRate(sr);
     reverb.setSampleRate(sr);
     delayBuf.setSize(2, (int)(sr * 2.0)); delayBuf.clear(); delayPos = 0;
     keyboardState.reset();
@@ -121,7 +211,8 @@ void MultiverseXProcessor::processBlock(juce::AudioBuffer<float>& buf, juce::Mid
     juce::ScopedNoDenormals nd;
     buf.clear();
     keyboardState.processNextMidiBuffer(midi, 0, buf.getNumSamples(), true);
-    synth.renderNextBlock(buf, midi, 0, buf.getNumSamples());
+    if (apvts.getRawParameterValue("synthOn")->load() > 0.5f) synth.renderNextBlock(buf, midi, 0, buf.getNumSamples());
+    sampler.renderNextBlock(buf, midi, 0, buf.getNumSamples());
 
     const float rv = apvts.getRawParameterValue("reverb")->load();
     const float dl = apvts.getRawParameterValue("delay")->load();
@@ -170,10 +261,40 @@ void MultiverseXProcessor::randomize() {
 }
 
 void MultiverseXProcessor::getStateInformation(juce::MemoryBlock& d) {
+    apvts.state.setProperty("samplePath", samplePath, nullptr);
     if (auto xml = apvts.copyState().createXml()) copyXmlToBinary(*xml, d);
 }
 void MultiverseXProcessor::setStateInformation(const void* d, int n) {
-    if (auto xml = getXmlFromBinary(d, n)) apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    if (auto xml = getXmlFromBinary(d, n)) {
+        apvts.replaceState(juce::ValueTree::fromXml(*xml));
+        auto path = apvts.state.getProperty("samplePath").toString();
+        if (path.isNotEmpty() && juce::File(path).existsAsFile()) loadSample(juce::File(path));
+    }
+}
+
+bool MultiverseXProcessor::loadSample(const juce::File& f) {
+    juce::AudioFormatManager fm; fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> r(fm.createReaderFor(f));
+    if (r == nullptr || r->lengthInSamples < 2 || r->lengthInSamples > 20000000) return false;
+    auto* snd = new MxSampleSound();
+    const int len = (int)r->lengthInSamples;
+    snd->sr = r->sampleRate;
+    snd->data.setSize((int)juce::jmin<unsigned int>(r->numChannels, 2u), len);
+    r->read(&snd->data, 0, len, 0, true, true);
+
+    std::vector<float> pk(600, 0.f);                       // overview for the waveform display
+    for (int i = 0; i < (int)pk.size(); ++i) {
+        const int a = (int)((juce::int64)len * i / (int)pk.size()), b = juce::jmax(a + 1, (int)((juce::int64)len * (i + 1) / (int)pk.size()));
+        float m = 0;
+        for (int c = 0; c < snd->data.getNumChannels(); ++c)
+            m = juce::jmax(m, snd->data.getMagnitude(c, a, juce::jmin(b, len) - a));
+        pk[(size_t)i] = m;
+    }
+    { juce::SpinLock::ScopedLockType l(peakLock); peaks = std::move(pk); }
+    sampler.clearSounds();
+    sampler.addSound(snd);
+    samplePath = f.getFullPathName();
+    return true;
 }
 
 juce::AudioProcessorEditor* MultiverseXProcessor::createEditor() { return new MultiverseXEditor(*this); }

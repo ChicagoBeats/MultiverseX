@@ -26,6 +26,9 @@ public:
 
     void applyEngine(int index);   // loads an engine's preset into the parameters
     void randomize();              // Click = Randomize (locks come next)
+    bool loadSample(const juce::File&);   // message thread only
+    juce::String getSampleName() const { return juce::File(samplePath).getFileName(); }
+    juce::SpinLock peakLock; std::vector<float> peaks;   // waveform overview for the UI
 
     juce::AudioProcessorValueTreeState apvts;
     juce::MidiKeyboardState keyboardState;
@@ -35,7 +38,8 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
     void setP(const char* id, float v);
-    juce::Synthesiser synth;
+    juce::Synthesiser synth, sampler;
+    juce::String samplePath;
     juce::Reverb reverb;
     juce::AudioBuffer<float> delayBuf;
     int delayPos = 0;
