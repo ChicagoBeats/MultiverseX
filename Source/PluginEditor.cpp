@@ -217,17 +217,52 @@ void FxSlotView::resized()
 // ============================================================================
 namespace
 {
-    struct ColourPopup : public juce::ColourSelector, private juce::ChangeListener
+    // Simple HSV colour picker (no dependency on juce::ColourSelector)
+    struct ColourPopup : public juce::Component
     {
         std::function<void(juce::Colour)> cb;
-        ColourPopup(juce::Colour c, std::function<void(juce::Colour)> f)
-            : juce::ColourSelector(juce::ColourSelector::showColourAtTop | juce::ColourSelector::showSliders | juce::ColourSelector::showColourspace),
-              cb(std::move(f))
+        juce::Slider sh, ss, sb;
+        juce::Label lh, ls, lb;
+        juce::Colour cur;
+        bool silent = true;
+
+        ColourPopup(juce::Colour c, std::function<void(juce::Colour)> f) : cb(std::move(f)), cur(c)
         {
-            setCurrentColour(c); setSize(300, 380); addChangeListener(this);
+            setupSlider(sh, lh, "Hue", c.getHue());
+            setupSlider(ss, ls, "Saturation", c.getSaturation());
+            setupSlider(sb, lb, "Brightness", c.getBrightness());
+            setSize(300, 200);
+            silent = false;
         }
-        ~ColourPopup() override { removeChangeListener(this); }
-        void changeListenerCallback(juce::ChangeBroadcaster*) override { if (cb) cb(getCurrentColour()); }
+        void setupSlider(juce::Slider& s, juce::Label& l, const juce::String& name, float v)
+        {
+            s.setSliderStyle(juce::Slider::LinearHorizontal);
+            s.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+            s.setRange(0.0, 1.0, 0.001); s.setValue(v, juce::dontSendNotification);
+            s.onValueChange = [this] {
+                if (silent) return;
+                cur = juce::Colour::fromHSV((float)sh.getValue(), (float)ss.getValue(), (float)sb.getValue(), 1.f);
+                repaint();
+                if (cb) cb(cur);
+            };
+            l.setText(name, juce::dontSendNotification); l.setColour(juce::Label::textColourId, juce::Colours::white);
+            addAndMakeVisible(s); addAndMakeVisible(l);
+        }
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(juce::Colour(0xff15090c));
+            g.setColour(cur); g.fillRoundedRectangle(10.f, 10.f, (float)getWidth() - 20.f, 40.f, 8.f);
+            g.setColour(juce::Colours::white.withAlpha(0.7f)); g.drawRoundedRectangle(10.f, 10.f, (float)getWidth() - 20.f, 40.f, 8.f, 1.5f);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced(10); r.removeFromTop(48);
+            for (auto* p : { &sh, &ss, &sb }) {
+                auto row = r.removeFromTop(40);
+                auto* l = (p == &sh) ? &lh : (p == &ss ? &ls : &lb);
+                l->setBounds(row.removeFromLeft(90)); p->setBounds(row);
+            }
+        }
     };
 
     const char* const kTabNames[4] = { "SYNTH", "SAMPLER", "FX RACK", "SKIN / VFX" };
