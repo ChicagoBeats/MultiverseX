@@ -4,12 +4,21 @@ jobs:
   win:
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         arch: [x64, Win32]
     steps:
       - uses: actions/checkout@v4
       - run: cmake -B build -A ${{ matrix.arch }}
-      - run: cmake --build build --config Release --parallel
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
+          exit $LASTEXITCODE
+      - name: Show errors
+        if: failure()
+        shell: pwsh
+        run: Select-String -Path build.log -Pattern 'error' | Select-Object -First 25 | ForEach-Object { $_.Line }
       - uses: actions/upload-artifact@v4
         with:
           name: MultiverseX-VST3-${{ matrix.arch }}
