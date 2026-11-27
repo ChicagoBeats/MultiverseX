@@ -5,7 +5,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Video on the stage strip (DirectShow, works on Windows 7/8). If a build ever fails inside
 # juce_video, turn this OFF (cmake -DMVX_VIDEO=OFF) - everything else keeps working.
-option(MVX_VIDEO "Enable video playback on the stage strip" ON)
+option(MVX_VIDEO "Enable video playback on the stage strip" OFF)
 
 include(FetchContent)
 # JUCE 7.0.12 = last line that still targets older Windows; JUCE 8 needs Win10+
