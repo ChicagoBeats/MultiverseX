@@ -1,0 +1,27 @@
+MULTIVERSEX - WHAT TO UPLOAD TO GITHUB
+
+REQUIRED (the build fails without these):
+  CMakeLists.txt
+  .github/workflows/build.yml      <- hidden folder; it must have exactly this path
+  Source/Effects.h
+  Source/Engines.h
+  Source/ModMatrix.h
+  Source/NeonLookAndFeel.h
+  Source/PluginEditor.cpp
+  Source/PluginEditor.h
+  Source/PluginProcessor.cpp
+  Source/PluginProcessor.h
+
+OPTIONAL (safe to skip):
+  README.md
+  .gitignore
+  START-HERE.txt
+
+AFTER UPLOADING:
+  1. GitHub > Actions > "Build VST3" > open the newest run.
+  2. Download BOTH artifacts: MultiverseX-VST3-x64 and MultiverseX-VST3-Win32.
+  3. Copy the .vst3 into C:\Program Files\Common Files\VST3
+     (use x64 for 64-bit FL Studio, Win32 for 32-bit FL Studio).
+  4. If it still fails to load, open the run's "List plugin dependencies" step and send me that text.
+
+Delete old MultiverseX plugin files from your plugin folders first so FL doesn't pick up an old version.
