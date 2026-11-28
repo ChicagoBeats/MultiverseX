@@ -1,35 +1,17 @@
-name: Build VST3
+name: A/B build
 on: [push, workflow_dispatch]
 jobs:
   win:
-    # same runner image that built your working v0.2
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
-        arch: [x64, Win32]
+        proj: [control, current]
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -B build -A ${{ matrix.arch }}
-      - run: cmake --build build --config Release --parallel
-      - name: Windows 7/8 compatibility report
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $dump = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
-          $bin = Get-ChildItem build -Recurse -File -Filter MultiverseX.vst3 | Select-Object -First 1
-          $out = & $dump /dependents /imports $bin.FullName | Out-String
-          $out | Out-File imports-${{ matrix.arch }}.txt
-          $bad = @('api-ms-win-core-synch-l1-2-0','WaitOnAddress','WakeByAddress','GetSystemTimePreciseAsFileTime','SetThreadDescription','PrefetchVirtualMemory')
-          $hits = @($bad | Where-Object { $out -match $_ })
-          $msg = if ($hits.Count -gt 0) { "WIN7 PROBLEM (${{ matrix.arch }}): needs $($hits -join ', ')" } else { "No known Win7-incompatible imports found (${{ matrix.arch }})" }
-          Write-Host $msg
-          $msg | Out-File -Append $env:GITHUB_STEP_SUMMARY
+      - run: cmake -S ${{ matrix.proj }} -B build-${{ matrix.proj }} -A x64
+      - run: cmake --build build-${{ matrix.proj }} --config Release --parallel
       - uses: actions/upload-artifact@v4
         with:
-          name: MultiverseX-VST3-${{ matrix.arch }}
-          path: build/MultiverseX_artefacts/Release/VST3/MultiverseX.vst3
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: imports-${{ matrix.arch }}
-          path: imports-${{ matrix.arch }}.txt
+          name: ${{ matrix.proj }}-x64
+          path: build-${{ matrix.proj }}/MultiverseX_artefacts/Release/VST3/MultiverseX.vst3
