@@ -1,12 +1,12 @@
-A/B TEST - one GitHub run builds two plugins (64-bit):
-  control = your exact working v0.2 code (only its plugin ID changed)
-  current = the newest code (v0.7)
+MULTIVERSEX v0.2 + SIZE DROPDOWN  (your working v0.2 code, one change: a "Size" dropdown, top right, 50%-100%)
 
-1. Make a NEW GitHub repo and upload everything in this zip, keeping the folders
-   (control/, current/, .github/workflows/build.yml).
-2. Actions > open the run > download the two artifacts: control-x64 and current-x64.
-3. From each, take the single file inside  MultiverseX.vst3 > Contents > x86_64-win
-   Rename them  MultiverseX_control.vst3  and  MultiverseX_0_7.vst3
-   and put both in the same folder as your working MultiverseX_0_2.vst3.
-4. Rescan plugins in FL, then try each one in a NEW EMPTY project.
-5. Tell me: does control open? does current open?
+UPLOAD (repo root must look like this):
+  CMakeLists.txt
+  .github/workflows/build.yml
+  Source/PluginEditor.cpp  PluginEditor.h  PluginProcessor.cpp  PluginProcessor.h  Engines.h
+
+INSTALL: from the MultiverseX-size-x64 artifact take the single file in MultiverseX.vst3 > Contents > x86_64-win,
+  rename it MultiverseX_0_2_size.vst3 and put it next to your working v0.2 file. Rescan, test in a NEW project.
+  (It has its own plugin ID, so it does not clash with your v0.2 file.)
+
+USE: pick 50%-100% in the Size box at the top right. Your choice is saved with the project.
