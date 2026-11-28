@@ -266,10 +266,12 @@ private:
     // header
     juce::ComboBox engineBox, engine2Box;
     juce::TextButton prev{ "<" }, next{ ">" }, rnd{ "Random" }, hideBtn{ "Hide UI" };
+    juce::ToggleButton randLvl{ "Rand levels" };
+    std::unique_ptr<BA> randLvlAtt;
     std::unique_ptr<CA> engineAtt, engine2Att;
 
     // synth page
-    Knob kBlend, kDetune, kCutoff, kRes, kDrive, kMix, kMaster, kIn, kFenv, kL1R, kL1C, kL2R, kL2P;
+    Knob kBlend, kDetune, kCutoff, kRes, kDrive, kMix, kSynthVol, kSampVol, kSend, kMaster, kIn, kFenv, kL1R, kL1C, kL2R, kL2P;
     EnvelopeView envAmp, envFilt;
 
     // sampler page

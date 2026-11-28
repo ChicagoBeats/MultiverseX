@@ -115,7 +115,7 @@ struct MxSampleVoice : juce::SynthesiserVoice {
         ratio = std::pow(2.0, semis / 12.0 + P("sPitch") / 1200.0) * P("sSpeed") * snd->sr / getSampleRate();
         loop = P("sLoop") > 0.5f; rev = P("sRev") > 0.5f;
         pos = rev ? s1 - 1 : s0;
-        gain = P("sVol") * vel;
+        gain = vel;   // level (dB) is applied in processBlock
         const float ang = (juce::jlimit(-1.f, 1.f, P("sPan")) + 1.f) * juce::MathConstants<float>::pi * 0.25f;
         gl = std::cos(ang) * 1.4142f; gr = std::sin(ang) * 1.4142f;
         adsr.setSampleRate(getSampleRate());
@@ -195,7 +195,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiverseXProcessor::layout
     f("lfo1Cut", "LFO1>Cutoff", 0, 1, 0.75f);
     f("lfo2Rate", "LFO2 Rate", 0.05f, 20, 4, 0.4f);
     f("lfo2Pitch", "LFO2>Pitch", 0, 1, 0.1f);
-    f("mixBlend", "Synth<>Sampler Blend", 0, 1, 0.5f);
+    f("mixBlend", "Synth+FX <> Sample Blend", 0, 1, 0.5f);
+    {   // volumes in dB. Synth: -100..0.  Sample: -100..+21.6 (-100 = silent)
+        juce::NormalisableRange<float> sr(-100.f, 21.6f, 0.01f); sr.setSkewForCentre(-12.f);
+        juce::NormalisableRange<float> yr(-100.f, 0.f, 0.01f);   yr.setSkewForCentre(-12.f);
+        l.add(std::make_unique<APF>("synthVol", "Synth Volume", yr, 0.f, juce::AudioParameterFloatAttributes().withLabel(" dB")));
+        l.add(std::make_unique<APF>("sVol", "Sample Volume", sr, 0.f, juce::AudioParameterFloatAttributes().withLabel(" dB")));
+    }
+    f("sFxSend", "Sample > FX Send", 0, 1, 0);
     f("master", "Master", 0, 1, 0.7f);
     f("inGain", "Input Gain", 0, 2, 1);
     // ---- FX rack
@@ -222,11 +229,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiverseXProcessor::layout
     f("sSpeed", "Speed", 0.25f, 4, 1);
     f("sPitch", "Pitch", -100, 100, 0);
     f("sPan", "Pan", -1, 1, 0);
-    f("sVol", "Volume", 0, 1.5f, 0.8f);
     l.add(std::make_unique<juce::AudioParameterInt>("sSlices", "Slices", 2, 32, 8));
     l.add(std::make_unique<juce::AudioParameterBool>("sLoop", "Loop", false));
     l.add(std::make_unique<juce::AudioParameterBool>("sRev", "Reverse", false));
     l.add(std::make_unique<juce::AudioParameterBool>("synthOn", "Synth On", true));
+    l.add(std::make_unique<juce::AudioParameterBool>("randLevels", "Randomizer Sets Levels (-5..0 dB)", true));
     l.add(std::make_unique<juce::AudioParameterChoice>("sMode", "Sampler Mode", juce::StringArray{"Map", "Slice"}, 0));
     return l;
 }
@@ -264,6 +271,8 @@ MultiverseXProcessor::MultiverseXProcessor()
     pFxMix = apvts.getRawParameterValue("fxMix"); pMaster = apvts.getRawParameterValue("master");
     pBlend = apvts.getRawParameterValue("mixBlend"); pSynthOn = apvts.getRawParameterValue("synthOn");
     pInGain = apvts.getRawParameterValue("inGain"); pMorph = apvts.getRawParameterValue("morph");
+    pSynthVol = apvts.getRawParameterValue("synthVol"); pSampVol = apvts.getRawParameterValue("sVol");
+    pSend = apvts.getRawParameterValue("sFxSend"); pRandLvl = apvts.getRawParameterValue("randLevels");
     apvts.addParameterListener("morph", this);
 
     // user's default skin (Documents\Hazel Bandz\MultiverseX\default.mvxskin), else the red matrix
@@ -319,9 +328,19 @@ void MultiverseXProcessor::processBlock(juce::AudioBuffer<float>& buf, juce::Mid
     synthBuf.clear(); sampBuf.clear();
     if (pSynthOn->load() > 0.5f) synth.renderNextBlock(synthBuf, midi, 0, n);
     sampler.renderNextBlock(sampBuf, midi, 0, n);
+
+    // ---- mix: Synth(+FX) <> Sample blend, plus separate volumes in dB (-100 = silent)
+    auto dbGain = [](float db) { return db <= -99.9f ? 0.f : juce::Decibels::decibelsToGain(db); };
     const float bl = pBlend->load();
     const float gS = juce::jmin(1.f, 2.f * (1.f - bl)), gP = juce::jmin(1.f, 2.f * bl);
-    for (int c = 0; c < nch; ++c) { buf.addFrom(c, 0, synthBuf, c, 0, n, gS); buf.addFrom(c, 0, sampBuf, c, 0, n, gP); }
+    const float synthG = gS * dbGain(pSynthVol->load()), sampG = gP * dbGain(pSampVol->load());
+    const float send = juce::jlimit(0.f, 1.f, pSend->load());
+    sampBuf.applyGain(0, n, sampG);
+    for (int c = 0; c < nch; ++c) {
+        buf.addFrom(c, 0, synthBuf, c, 0, n, synthG);     // synth (+ any input audio) goes into the FX rack
+        buf.addFrom(c, 0, sampBuf, c, 0, n, send);        // optional amount of the sample sent into the FX rack
+    }
+    sampBuf.applyGain(0, n, 1.f - send);                  // the rest of the sample stays DRY (bypasses the FX)
 
     // ---- FX rack
     double bpm = 120.0;
@@ -342,6 +361,7 @@ void MultiverseXProcessor::processBlock(juce::AudioBuffer<float>& buf, juce::Mid
             auto* d = buf.getWritePointer(c); auto* dr = dryBuf.getReadPointer(c);
             for (int i = 0; i < n; ++i) d[i] = dr[i] + (d[i] - dr[i]) * wetAll;
         }
+    for (int c = 0; c < nch; ++c) buf.addFrom(c, 0, sampBuf, c, 0, n, 1.f);   // dry sample on top of the FX
 
     buf.applyGain(pMaster->load());
     visLevel = juce::jlimit(0.f, 1.f, buf.getMagnitude(0, n) * 2.f);
@@ -359,11 +379,21 @@ void MultiverseXProcessor::applyEngine(int i) {
     setP("atk", e.atk); setP("rel", e.rel);
 }
 
+void MultiverseXProcessor::randomizeLevels() {
+    // the randomizer never leaves -5..0 dB. Only YOU can push the volumes past that.
+    juce::Random r;
+    setP("synthVol", -5.f + r.nextFloat() * 5.f);
+    setP("sVol", -5.f + r.nextFloat() * 5.f);
+}
+
 void MultiverseXProcessor::randomize() {
     juce::Random r;
-    for (auto* id : {"cutoff","res","drive","atk","dec","sus","rel","detune","lfo1Rate","lfo1Cut","lfo2Rate","lfo2Pitch","engBlend","fEnv","fAtk","fDec","fSus","fRel"})
+    for (auto* id : {"cutoff","sus","rel","dec","atk","detune","lfo1Rate","lfo1Cut","lfo2Rate","lfo2Pitch","engBlend","fEnv","fAtk","fDec","fSus","fRel"})
         if (auto* p = apvts.getParameter(id)) p->setValueNotifyingHost(r.nextFloat());
+    if (auto* p = apvts.getParameter("res")) p->setValueNotifyingHost(r.nextFloat() * 0.7f);     // keep resonance tame
+    if (auto* p = apvts.getParameter("drive")) p->setValueNotifyingHost(r.nextFloat() * 0.5f);   // keep drive tame
     if (auto* p = apvts.getParameter("engine2")) p->setValueNotifyingHost(r.nextFloat());
+    if (pRandLvl->load() > 0.5f) randomizeLevels();
 }
 
 void MultiverseXProcessor::randomizeFx() {
@@ -371,11 +401,19 @@ void MultiverseXProcessor::randomizeFx() {
     for (int s = 1; s <= kNumFxSlots; ++s) {
         const juce::String p = "fx" + juce::String(s) + "_";
         const bool use = r.nextFloat() < 0.7f;
-        if (auto* t = apvts.getParameter(p + "type")) t->setValueNotifyingHost(t->convertTo0to1((float)(use ? 1 + r.nextInt(kNumFxTypes - 1) : 0)));
+        const int type = use ? 1 + r.nextInt(kNumFxTypes - 1) : 0;
+        float a = r.nextFloat(), b = r.nextFloat(), cc = r.nextFloat();
+        if (type == 11) cc *= 0.2f;                       // compressor make-up: at most ~+3.6 dB
+        if (type == 15) { a = 0.08f + r.nextFloat() * 0.32f; cc *= 0.1f; }   // limiter ceiling -1..-5 dB, tiny gain
+        if (type == 1) a *= 0.6f;                         // drive amount stays musical
+        if (auto* t = apvts.getParameter(p + "type")) t->setValueNotifyingHost(t->convertTo0to1((float)type));
         if (auto* o = apvts.getParameter(p + "on")) o->setValueNotifyingHost(use ? 1.f : 0.f);
         if (auto* m = apvts.getParameter(p + "mix")) m->setValueNotifyingHost(0.25f + r.nextFloat() * 0.5f);
-        for (auto* suf : { "a", "b", "c" }) if (auto* q = apvts.getParameter(p + suf)) q->setValueNotifyingHost(r.nextFloat());
+        if (auto* q = apvts.getParameter(p + "a")) q->setValueNotifyingHost(a);
+        if (auto* q = apvts.getParameter(p + "b")) q->setValueNotifyingHost(b);
+        if (auto* q = apvts.getParameter(p + "c")) q->setValueNotifyingHost(cc);
     }
+    if (pRandLvl->load() > 0.5f) randomizeLevels();
 }
 
 // ---------------------------------------------------------------- A/B morph

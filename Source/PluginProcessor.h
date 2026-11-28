@@ -35,6 +35,7 @@ public:
     void applyEngine(int index);            // loads an engine's preset into the parameters
     void randomize();                       // synth randomize
     void randomizeFx();                     // FX rack randomize
+    void randomizeLevels();                 // random volumes, always inside -5..0 dB
     bool loadSample(const juce::File&);     // message thread only
     juce::String getSampleName() const { return juce::File(samplePath).getFileName(); }
     juce::SpinLock peakLock; std::vector<float> peaks;
@@ -75,6 +76,7 @@ private:
     std::atomic<float>* pA[kNumFxSlots]; std::atomic<float>* pB[kNumFxSlots]; std::atomic<float>* pC[kNumFxSlots];
     std::atomic<float>* pFxMix = nullptr; std::atomic<float>* pMaster = nullptr; std::atomic<float>* pBlend = nullptr;
     std::atomic<float>* pSynthOn = nullptr; std::atomic<float>* pInGain = nullptr; std::atomic<float>* pMorph = nullptr;
+    std::atomic<float>* pSynthVol = nullptr; std::atomic<float>* pSampVol = nullptr; std::atomic<float>* pSend = nullptr; std::atomic<float>* pRandLvl = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiverseXProcessor)
 };

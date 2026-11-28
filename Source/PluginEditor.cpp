@@ -275,7 +275,8 @@ MultiverseXEditor::MultiverseXEditor(MultiverseXProcessor& p)
     : AudioProcessorEditor(&p), proc(p), backdrop(p), content(p),
       pageSynth(p), pageSamp(p), pageFx(p), pageSkin(p),
       kBlend(p.apvts, "engBlend", "Eng A<>B"), kDetune(p.apvts, "detune", "Detune"), kCutoff(p.apvts, "cutoff", "Cutoff"),
-      kRes(p.apvts, "res", "Resonance"), kDrive(p.apvts, "drive", "Drive"), kMix(p.apvts, "mixBlend", "Synth<>Smp"),
+      kRes(p.apvts, "res", "Resonance"), kDrive(p.apvts, "drive", "Drive"), kMix(p.apvts, "mixBlend", "Synth<>Sample"),
+      kSynthVol(p.apvts, "synthVol", "Synth Vol dB"), kSampVol(p.apvts, "sVol", "Sample Vol dB"), kSend(p.apvts, "sFxSend", "Sample>FX"),
       kMaster(p.apvts, "master", "Master"), kIn(p.apvts, "inGain", "Input"), kFenv(p.apvts, "fEnv", "Filt Env Amt"),
       kL1R(p.apvts, "lfo1Rate", "LFO1 Rate"), kL1C(p.apvts, "lfo1Cut", "LFO1>Cut"),
       kL2R(p.apvts, "lfo2Rate", "LFO2 Rate"), kL2P(p.apvts, "lfo2Pitch", "LFO2>Pitch"),
@@ -307,6 +308,8 @@ MultiverseXEditor::MultiverseXEditor(MultiverseXProcessor& p)
     rnd.onClick = [this] { proc.randomize(); };
     hideBtn.onClick = [this] { content.setVisible(false); };
     for (auto* b : { &prev, &next, &rnd, &hideBtn }) content.addAndMakeVisible(*b);
+    content.addAndMakeVisible(randLvl);
+    randLvlAtt = std::make_unique<BA>(p.apvts, "randLevels", randLvl);
 
     for (int i = 0; i < 4; ++i) {
         tabBtn[i].setButtonText(kTabNames[i]);
@@ -317,7 +320,7 @@ MultiverseXEditor::MultiverseXEditor(MultiverseXProcessor& p)
     for (auto* pg : { &pageSynth, &pageSamp, &pageFx, &pageSkin }) content.addAndMakeVisible(*pg);
 
     // ---------------- synth page
-    for (auto* k : { &kBlend, &kDetune, &kCutoff, &kRes, &kDrive, &kMix, &kMaster, &kFenv, &kL1R, &kL1C, &kL2R, &kL2P }) pageSynth.addAndMakeVisible(*k);
+    for (auto* k : { &kBlend, &kDetune, &kCutoff, &kRes, &kDrive, &kMix, &kSynthVol, &kSampVol, &kSend, &kMaster, &kFenv, &kL1R, &kL1C, &kL2R, &kL2P }) pageSynth.addAndMakeVisible(*k);
     pageSynth.addChildComponent(kIn); kIn.setVisible(!JucePlugin_IsSynth);
     pageSynth.addAndMakeVisible(envAmp); pageSynth.addAndMakeVisible(envFilt);
 
@@ -338,7 +341,7 @@ MultiverseXEditor::MultiverseXEditor(MultiverseXProcessor& p)
             [this](const juce::FileChooser& fc) { auto f = fc.getResult(); if (f.existsAsFile()) loadSampleFile(f); });
     };
     const std::pair<const char*, const char*> sdefs[] = {
-        {"sStart","Start"},{"sEnd","End"},{"sTune","Tune"},{"sSpeed","Speed"},{"sPitch","Pitch"},{"sPan","Pan"},{"sVol","Volume"},{"sSlices","Slices"} };
+        {"sStart","Start"},{"sEnd","End"},{"sTune","Tune"},{"sSpeed","Speed"},{"sPitch","Pitch"},{"sPan","Pan"},{"sVol","Sample Vol dB"},{"sSlices","Slices"} };
     for (auto& d : sdefs) { auto k = std::make_unique<Knob>(p.apvts, d.first, d.second); pageSamp.addAndMakeVisible(*k); sKnobs.push_back(std::move(k)); }
 
     // ---------------- FX page
@@ -496,7 +499,7 @@ void MultiverseXEditor::layoutPages()
     content.setBounds(0, 0, kDW, kDH);
     prev.setBounds(306, 10, 34, 28); next.setBounds(344, 10, 34, 28);
     engineBox.setBounds(384, 10, 190, 28); engine2Box.setBounds(580, 10, 190, 28);
-    rnd.setBounds(776, 10, 76, 28); hideBtn.setBounds(988, 10, 96, 28);
+    rnd.setBounds(776, 10, 76, 28); randLvl.setBounds(856, 10, 128, 28); hideBtn.setBounds(988, 10, 96, 28);
     for (int i = 0; i < 4; ++i) tabBtn[i].setBounds(18 + i * 140, 44, 132, 28);
     const juce::Rectangle<int> pr(20, 196, 1060, 496);
     for (auto* pg : { &pageSynth, &pageSamp, &pageFx, &pageSkin }) pg->setBounds(pr);
@@ -504,7 +507,7 @@ void MultiverseXEditor::layoutPages()
 
     // synth page
     int x = 10;
-    for (auto* k : { &kBlend, &kDetune, &kCutoff, &kRes, &kDrive, &kMix, &kMaster, &kIn }) { k->setBounds(x, 12, 84, 104); x += 92; }
+    for (auto* k : { &kBlend, &kDetune, &kCutoff, &kRes, &kDrive, &kMix, &kSynthVol, &kSampVol, &kSend, &kMaster, &kIn }) { k->setBounds(x, 12, 84, 104); x += 92; }
     envAmp.setBounds(10, 130, 330, 160); envFilt.setBounds(350, 130, 330, 160);
     kFenv.setBounds(690, 156, 84, 104);
     x = 10;
