@@ -4,24 +4,23 @@ jobs:
   win:
     runs-on: windows-latest
     strategy:
-      fail-fast: false
       matrix:
         arch: [x64, Win32]
     steps:
       - uses: actions/checkout@v4
       - run: cmake -B build -A ${{ matrix.arch }}
-      - name: Build
+      - run: cmake --build build --config Release --parallel
+      # Diagnostic: lists the DLLs the plugin needs. If this shows api-ms-win-core-synch-l1-2-0.dll,
+      # the build cannot load on Windows 7.
+      - name: List plugin dependencies
+        continue-on-error: true
         shell: pwsh
         run: |
-          cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
-          exit $LASTEXITCODE
-      - name: Show errors
-        if: failure()
-        shell: pwsh
-        run: Select-String -Path build.log -Pattern 'error' | Select-Object -First 25 | ForEach-Object { $_.Line }
+          $dump = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $bin = Get-ChildItem build -Recurse -File -Filter MultiverseX.vst3 | Select-Object -First 1
+          Write-Host "Binary: $($bin.FullName)"
+          & $dump /dependents $bin.FullName
       - uses: actions/upload-artifact@v4
         with:
           name: MultiverseX-VST3-${{ matrix.arch }}
-          path: |
-            build/MultiverseX_artefacts/Release/VST3/MultiverseX.vst3
-            build/MultiverseXFX_artefacts/Release/VST3/MultiverseXFX.vst3
+          path: build/MultiverseX_artefacts/Release/VST3/MultiverseX.vst3
