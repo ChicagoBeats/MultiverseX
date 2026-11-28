@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MultiverseX VERSION 0.1.0)
+project(MultiverseX VERSION 0.7.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -11,7 +11,9 @@ FetchContent_MakeAvailable(JUCE)
 juce_add_plugin(MultiverseX
     COMPANY_NAME "Hazel Bandz"
     PLUGIN_MANUFACTURER_CODE HzBz
-    PLUGIN_CODE MvXx
+    # PLUGIN_CODE + PLUGIN_MANUFACTURER_CODE become the plugin's VST3 ID. Hosts treat files with the same ID as the SAME plugin,
+    # so every version you want installed side by side needs its own code (MvX7 here; v0.2-v0.6 all used MvXx).
+    PLUGIN_CODE MvX7
     FORMATS VST3
     PRODUCT_NAME "MultiverseX"
     IS_SYNTH TRUE

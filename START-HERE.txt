@@ -1,27 +1,17 @@
-MULTIVERSEX - WHAT TO UPLOAD TO GITHUB
+MULTIVERSEX v0.7 - WHAT TO UPLOAD TO GITHUB
 
-REQUIRED (the build fails without these):
+REQUIRED:
   CMakeLists.txt
-  .github/workflows/build.yml      <- hidden folder; it must have exactly this path
-  Source/Effects.h
-  Source/Engines.h
-  Source/ModMatrix.h
-  Source/NeonLookAndFeel.h
-  Source/PluginEditor.cpp
-  Source/PluginEditor.h
-  Source/PluginProcessor.cpp
-  Source/PluginProcessor.h
+  .github/workflows/build.yml      <- hidden folder; must have exactly this path
+  Source/Effects.h  Engines.h  ModMatrix.h  NeonLookAndFeel.h
+  Source/PluginEditor.cpp  PluginEditor.h  PluginProcessor.cpp  PluginProcessor.h
+OPTIONAL: README.md  .gitignore  START-HERE.txt
 
-OPTIONAL (safe to skip):
-  README.md
-  .gitignore
-  START-HERE.txt
+INSTALLING (important):
+  1. From the artifact, take the single file inside  MultiverseX.vst3 > Contents > x86_64-win  (64-bit)  or  x86-win  (32-bit).
+  2. Rename it MultiverseX_0_7.vst3 and put it where your working MultiverseX_0_2.vst3 is.
+  3. Leave v0.2 alone - v0.7 has its own plugin ID now, so they no longer clash.
+  4. Delete any OTHER old MultiverseX builds (v0.3-v0.6) from every plugin folder; they all share one ID with each other.
+  5. In FL: rescan plugins, then add it in a NEW EMPTY project first.
 
-AFTER UPLOADING:
-  1. GitHub > Actions > "Build VST3" > open the newest run.
-  2. Download BOTH artifacts: MultiverseX-VST3-x64 and MultiverseX-VST3-Win32.
-  3. Copy the .vst3 into C:\Program Files\Common Files\VST3
-     (use x64 for 64-bit FL Studio, Win32 for 32-bit FL Studio).
-  4. If it still fails to load, open the run's "List plugin dependencies" step and send me that text.
-
-Delete old MultiverseX plugin files from your plugin folders first so FL doesn't pick up an old version.
+RULE: whenever you want two builds installed at the same time, change PLUGIN_CODE in CMakeLists.txt (4 letters) for the new one.
