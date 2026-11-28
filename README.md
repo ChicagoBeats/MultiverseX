@@ -23,3 +23,10 @@ Two plugins from one codebase (GitHub Actions builds both):
 ## Build
 Push to GitHub -> Actions -> download artifacts. Local: `cmake -B build -A x64 && cmake --build build --config Release`.
 If the build fails inside `juce_video`, set `option(MVX_VIDEO ... OFF)` in CMakeLists.txt.
+
+## Mix & levels (v0.3.1)
+* **Synth<>Sample** blend knob, **Synth Vol** (-100..0 dB), **Sample Vol** (-100..+21.6 dB), **Sample>FX** send
+  (0 = sample stays dry and bypasses the FX rack so it stands out; raise it to run some of the sample through the FX).
+* Randomizers never leave -5..0 dB for volumes and keep make-up/limiter gains tame. Toggle "Rand levels" off to make
+  the randomizer leave your volumes alone. Only you can push levels beyond 0 dB.
+* Video is OFF by default (MVX_VIDEO in CMakeLists.txt); switch it ON when you want to try it.
