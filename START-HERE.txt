@@ -1,17 +1,12 @@
-MULTIVERSEX v0.7 - WHAT TO UPLOAD TO GITHUB
+A/B TEST - one GitHub run builds two plugins (64-bit):
+  control = your exact working v0.2 code (only its plugin ID changed)
+  current = the newest code (v0.7)
 
-REQUIRED:
-  CMakeLists.txt
-  .github/workflows/build.yml      <- hidden folder; must have exactly this path
-  Source/Effects.h  Engines.h  ModMatrix.h  NeonLookAndFeel.h
-  Source/PluginEditor.cpp  PluginEditor.h  PluginProcessor.cpp  PluginProcessor.h
-OPTIONAL: README.md  .gitignore  START-HERE.txt
-
-INSTALLING (important):
-  1. From the artifact, take the single file inside  MultiverseX.vst3 > Contents > x86_64-win  (64-bit)  or  x86-win  (32-bit).
-  2. Rename it MultiverseX_0_7.vst3 and put it where your working MultiverseX_0_2.vst3 is.
-  3. Leave v0.2 alone - v0.7 has its own plugin ID now, so they no longer clash.
-  4. Delete any OTHER old MultiverseX builds (v0.3-v0.6) from every plugin folder; they all share one ID with each other.
-  5. In FL: rescan plugins, then add it in a NEW EMPTY project first.
-
-RULE: whenever you want two builds installed at the same time, change PLUGIN_CODE in CMakeLists.txt (4 letters) for the new one.
+1. Make a NEW GitHub repo and upload everything in this zip, keeping the folders
+   (control/, current/, .github/workflows/build.yml).
+2. Actions > open the run > download the two artifacts: control-x64 and current-x64.
+3. From each, take the single file inside  MultiverseX.vst3 > Contents > x86_64-win
+   Rename them  MultiverseX_control.vst3  and  MultiverseX_0_7.vst3
+   and put both in the same folder as your working MultiverseX_0_2.vst3.
+4. Rescan plugins in FL, then try each one in a NEW EMPTY project.
+5. Tell me: does control open? does current open?
